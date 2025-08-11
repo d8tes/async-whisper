@@ -79,38 +79,42 @@ result = await transcribe(
 
 ---
 
-## Configuration Options
 
-| Option                  | Type        | Description                                                       | Default         |
-|-------------------------|-------------|-------------------------------------------------------------------|-----------------|
-| `model`                 | `str`       | Whisper model size (tiny, base, small, medium, large, turbo)      | `base`          |
-| `language`              | `str`       | Language code for transcription or detection                      | Auto-detect     |
-| `task`                  | `str`       | Task type: `transcribe` or `translate`                            | `transcribe`    |
-| `temperature`           | `float`/list| Sampling temperature(s) for decoding                              | `[0.0,0.2,...]` |
-| `beam_size`             | `int`       | Beam width for beam search decoder                                | None            |
-| `best_of`               | `int`       | Number of candidate sequences to pick best from                   | None            |
-| `patience`              | `float`     | Patience parameter for decoding                                   | None            |
-| `length_penalty`        | `float`     | Length penalty for beam search                                    | None            |
-| `suppress_tokens`       | `str`/list  | Tokens to suppress during decoding                                | `"-1"`          |
-| `condition_on_previous_text` | `bool` | Condition each segment on previous transcription                  | `True`          |
-| `clip_timestamps`       | `str`/list  | Comma-separated time ranges for partial transcription             | `"0"`           |
-| `word_timestamps`       | `bool`      | Enable word-level timestamps                                      | `False`         |
-| `fp16`                  | `bool`      | Use fp16 for faster inference on supported GPUs                   | `True`          |
+## configuration options
+
+| option                   | type        | description                                                     | default          |
+|--------------------------|-------------|-----------------------------------------------------------------|------------------|
+| `model`                  | `str`       | whisper model size (tiny, base, small, medium, large, turbo)    | `base`           |
+| `language`               | `str`       | language code for transcription or detection                    | auto-detect      |
+| `task`                   | `str`       | task type: `transcribe` or `translate`                          | `transcribe`     |
+| `temperature`            | `float`/list| sampling temperature(s) for decoding                            | `[0.0,0.2,...]`  |
+| `beam_size`              | `int`       | beam width for beam search decoder                              | None             |
+| `best_of`                | `int`       | number of candidate sequences to pick best from                 | None             |
+| `patience`               | `float`     | patience parameter for decoding                                 | None             |
+| `length_penalty`         | `float`     | length penalty for beam search                                  | None             |
+| `suppress_tokens`        | `str`/list  | tokens to suppress during decoding                              | `"-1"`           |
+| `condition_on_previous_text` | `bool`  | condition each segment on previous transcription                | `True`           |
+| `clip_timestamps`        | `str`/list  | comma-separated time ranges for partial transcription           | `"0"`            |
+| `word_timestamps`        | `bool`      | enable word-level timestamps                                    | `False`          |
+| `fp16`                   | `bool`      | use fp16 for faster inference on supported gpus                 | `True`           |
+
+---
+
+## features
+
+- async transcription with `asyncio`  
+- support for all whisper models, from tiny to large/turbo  
+- language detection with auto-fallback  
+- beam search and greedy decoding, with temperature fallback  
+- word-level timestamps aligned with audio  
+- multiple output formats: txt, srt, vtt, tsv, json  
+- easy cli and python api usage  
+- gpu mixed precision (fp16) acceleration  
 
 ---
 
-## Features
+## development
 
-- Async transcription with `asyncio`
-- Support for all Whisper models, from tiny to large/turbo
-- Language detection with auto-fallback
-- Beam search and greedy decoding, with temperature fallback
-- Word-level timestamps aligned with audio
-- Multiple output formats: TXT, SRT, VTT, TSV, JSON
-- Easy CLI and Python API usage
-- GPU mixed precision (fp16) acceleration
-
----
 
 ## Development
 
@@ -121,7 +125,15 @@ pip install -e .[dev]
 pytest
 ```
 
+## Credits
 ```
-credits to openai-whispers
-support server: [discord.gg/pictures](https://discord.gg/pictures)
+credits to openai-whispers, https://github.com/openai/whisper/blob/main/requirements.txt  
+support server: [discord.gg/pictures](https://discord.gg/pictures)  
+created by keron 
 ```
+
+
+---
+
+## License
+This project is licensed under the [MIT License](LICENSE).
