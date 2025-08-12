@@ -15,7 +15,7 @@ Or, clone the repo and install:
 ```
 git clone https://github.com/d8tes/async-whisper.git
 cd async-whisper
-pip install -r requirements.txt
+pip install -r req.txt
 python setup.py install
 ```
 
@@ -148,5 +148,6 @@ created by keron
 
 ## License
 This project is licensed under the [MIT License](LICENSE).
+
 
 
