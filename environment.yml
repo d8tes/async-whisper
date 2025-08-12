@@ -1,10 +1,11 @@
-name: base
+name: async-whisper
 channels:
   - conda-forge
 dependencies:
   - python=3.10
   - pip
-  - pytest
   - flake8
+  - pytest
   - pip:
-    - -r req.txt
+      - -r req.txt
+
