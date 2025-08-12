@@ -42,21 +42,32 @@ async-whisper audiofile.mp3 --model base --output_dir ./transcripts --language e
 
 ```
 import asyncio
+import os
+import torch
 from whisper import load_model, transcribe
+from whisper.dub.types.utils import get_writer
 
 async def main():
-    model = await load_model("base")  # can specify device with device='cuda'
+    model = "tiny"         # or base, small, medium, large
+    file = "audiofile.mp3"
+    dir = "./outputs"
+
+    os.makedirs(dir, exist_ok=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = await asyncio.to_thread(load_model, model, device=device)
     result = await transcribe(
         model,
-        "audiofile.mp3",
+        file,
         temperature=0.0,
-        fp16=True,
-        word_timestamps=True,
+        fp16=False
     )
-    print(result["text"])  # full transcription text
-    print(result["segments"])  # list of segments with timestamps and words
+    print(result["text"])
+    writer = get_writer("all", dir)
+    await asyncio.to_thread(writer, result, file, {})
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 
 
@@ -137,4 +148,5 @@ created by keron
 
 ## License
 This project is licensed under the [MIT License](LICENSE).
+
 
