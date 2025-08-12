@@ -4,7 +4,7 @@
 
 ## Installation
 
-Or, clone the repo and install:
+clone the repo and install:
 
 ```
 git clone https://github.com/d8tes/async-whisper.git
@@ -142,6 +142,7 @@ created by keron
 
 ## License
 This project is licensed under the [MIT License](LICENSE).
+
 
 
 
