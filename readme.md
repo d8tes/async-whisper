@@ -13,7 +13,7 @@ pip install async-whisper
 Or, clone the repo and install:
 
 ```
-git clone https://github.com/aiosqlite/async-whisper.git
+git clone https://github.com/d8tes/async-whisper.git
 cd async-whisper
 pip install -r requirements.txt
 python setup.py install
@@ -119,7 +119,7 @@ result = await transcribe(
 ## Development
 
 ```
-git clone https://github.com/aiosqlite/async-whisper.git
+git clone https://github.com/d8tes/async-whisper.git
 cd async-whisper
 pip install -e .[dev]
 pytest
@@ -137,3 +137,4 @@ created by keron
 
 ## License
 This project is licensed under the [MIT License](LICENSE).
+
