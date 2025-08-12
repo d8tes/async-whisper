@@ -4,12 +4,6 @@
 
 ## Installation
 
-Install from PyPI (if available) or clone and install dependencies manually:
-
-```
-pip install async-whisper
-```
-
 Or, clone the repo and install:
 
 ```
@@ -148,6 +142,7 @@ created by keron
 
 ## License
 This project is licensed under the [MIT License](LICENSE).
+
 
 
 
