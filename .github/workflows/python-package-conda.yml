@@ -5,15 +5,16 @@ on: [push]
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-    strategy:
-      max-parallel: 5
+    defaults:
+      run:
+        shell: bash -l {0}
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: conda-incubator/setup-miniconda@v3
         with:
-          miniconda-version: 'latest'
+          miniconda-version: latest
           auto-update-conda: true
           use-mamba: true
           environment-file: environment.yml
