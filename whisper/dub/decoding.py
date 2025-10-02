@@ -10,10 +10,11 @@ from ..audio import CHUNK_LENGTH
 from ..tokenizer import Tokenizer, get_tokenizer
 from .types.utils import compression_ratio
 
+# shucks mane type checking is stoopid
 if TYPE_CHECKING:
     from .types.model import Whisper
 
-# Global cache to store awaited tokenizer instances by init parameters
+# cache for storing instantiated tokenizer objects
 _tokenizer_await_cache: Dict[Tuple, Tokenizer] = {}
 
 async def _to_thread(func, *args, **kwargs):
