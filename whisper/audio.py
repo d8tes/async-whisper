@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 from subprocess import CalledProcessError, run
-from typing import Optional, Union, Tuple
+from typing import Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -11,17 +11,22 @@ try:
 except ImportError:
     HAS_TORCHAUDIO = False
 
-from .dub.types.utils import exact_div
+try:
+    import librosa
+    HAS_LIBROSA = True
+except ImportError:
+    HAS_LIBROSA = False
 
 SAMPLE_RATE = 16000
 N_FFT = 1024
 HOP_LENGTH = 160
 CHUNK_LENGTH = 30
+
 N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE
-N_FRAMES = exact_div(N_SAMPLES, HOP_LENGTH)
+N_FRAMES = (N_SAMPLES + HOP_LENGTH - 1) // HOP_LENGTH
 N_SAMPLES_PER_TOKEN = HOP_LENGTH * 2
-FRAMES_PER_SECOND = exact_div(SAMPLE_RATE, HOP_LENGTH)
-TOKENS_PER_SECOND = exact_div(SAMPLE_RATE, N_SAMPLES_PER_TOKEN)
+FRAMES_PER_SECOND = SAMPLE_RATE / HOP_LENGTH
+TOKENS_PER_SECOND = SAMPLE_RATE / N_SAMPLES_PER_TOKEN
 
 @lru_cache(maxsize=64)
 def _cached_load_audio(path: str, sr: int) -> np.ndarray:
@@ -60,7 +65,6 @@ def pad_or_trim(
     center: bool = False,
     constant_value: float = 0.0
 ) -> Union[np.ndarray, torch.Tensor]:
-
     if torch.is_tensor(array):
         current = array.shape[axis]
         if current > length:
@@ -103,41 +107,13 @@ def pad_or_trim(
 def get_hann_window(device: Union[str, torch.device], n_fft: int = N_FFT):
     return torch.hann_window(n_fft, dtype=torch.float32, device=device)
 
-@lru_cache(maxsize=None)
-def mel_filters(device: Union[str, torch.device], n_mels: int, n_fft: int = N_FFT):
-    assert n_mels in {80, 128}, f"Unsupported n_mels: {n_mels}"
-    filters_path = os.path.join(os.path.dirname(__file__), "assets", "mel_filters.npz")
-    with np.load(filters_path, mmap_mode="r", allow_pickle=False) as f:
-        return torch.from_numpy(f[f"mel_{n_mels}"]).to(device)
-
-@lru_cache(maxsize=64)
-def get_mel_transform(
-    device: Union[str, torch.device],
-    n_mels: int,
-    n_fft: int = N_FFT,
-    hop_length: int = HOP_LENGTH,
-    sample_rate: int = SAMPLE_RATE,
-    f_min: float = 0.0,
-    f_max: Optional[float] = None
-):
-    if not HAS_TORCHAUDIO:
-        return None
-    f_max = f_max or sample_rate / 2
-    mel_spec = torchaudio.transforms.MelSpectrogram(
-        sample_rate=sample_rate,
-        n_fft=n_fft,
-        hop_length=hop_length,
-        n_mels=n_mels,
-        window_fn=torch.hann_window,
-        center=True,
-        pad_mode="reflect",
-        power=2.0,
-        norm='slaney',
-        mel_scale='htk',
-        f_min=f_min,
-        f_max=f_max
-    ).to(device)
-    return mel_spec
+def create_mel_filters(n_fft: int, n_mels: int, sample_rate: int, fmin=0.0, fmax=None) -> torch.Tensor:
+    if HAS_LIBROSA:
+        fmax = fmax or sample_rate / 2
+        mel_fb = librosa.filters.mel(sr=sample_rate, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=fmax)
+        return torch.from_numpy(mel_fb).float()
+    n_freq = n_fft//2 + 1
+    return torch.eye(n_mels, n_freq, dtype=torch.float32)
 
 def log_mel_spectrogram(
     audio: Union[str, np.ndarray, torch.Tensor],
@@ -156,23 +132,27 @@ def log_mel_spectrogram(
         audio = F.pad(audio, (0, padding))
     if dither > 0:
         audio = audio + dither * torch.randn_like(audio)
-    mel_transform = get_mel_transform(audio.device if device is None else device, n_mels, n_fft=N_FFT, hop_length=HOP_LENGTH)
-    if mel_transform is not None:
-        mel_spec = mel_transform(audio)
+
+    window = get_hann_window(audio.device if device is None else device, N_FFT)
+    stft = torch.stft(
+        audio,
+        n_fft=N_FFT,
+        hop_length=HOP_LENGTH,
+        window=window,
+        center=True,
+        pad_mode="reflect",
+        return_complex=True,
+    )
+    magnitudes = stft.abs() ** 2  # power spectrogram
+    mel_fb = create_mel_filters(N_FFT, n_mels, SAMPLE_RATE).to(magnitudes.device)
+
+    if mel_fb.shape[1] == magnitudes.shape[0]:
+        mel_spec = mel_fb @ magnitudes
+    elif mel_fb.shape[1] == magnitudes.shape[1]:
+        mel_spec = mel_fb @ magnitudes.T
     else:
-        window = get_hann_window(audio.device if device is None else device, N_FFT)
-        stft = torch.stft(
-            audio,
-            n_fft=N_FFT,
-            hop_length=HOP_LENGTH,
-            window=window,
-            center=True,
-            pad_mode="reflect",
-            return_complex=True,
-        )
-        magnitudes = stft[..., :-1].abs() ** 2
-        filters = mel_filters(audio.device if device is None else device, n_mels)
-        mel_spec = filters @ magnitudes
+        raise RuntimeError(f"Shape mismatch mel_fb: {mel_fb.shape} vs magnitudes: {magnitudes.shape}")
+
     log_spec = torch.clamp(mel_spec, min=1e-10).log10()
     log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
     return (log_spec + 4.0) / 4.0
