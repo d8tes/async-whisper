@@ -107,13 +107,31 @@ def pad_or_trim(
 def get_hann_window(device: Union[str, torch.device], n_fft: int = N_FFT):
     return torch.hann_window(n_fft, dtype=torch.float32, device=device)
 
-def create_mel_filters(n_fft: int, n_mels: int, sample_rate: int, fmin=0.0, fmax=None) -> torch.Tensor:
+def create_dynamic_mel_filters(n_fft, n_mels, sample_rate, fmin=0.0, fmax=None):
     if HAS_LIBROSA:
         fmax = fmax or sample_rate / 2
         mel_fb = librosa.filters.mel(sr=sample_rate, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=fmax)
         return torch.from_numpy(mel_fb).float()
-    n_freq = n_fft//2 + 1
-    return torch.eye(n_mels, n_freq, dtype=torch.float32)
+    n_freq = n_fft // 2 + 1
+    return torch.eye(n_mels, n_freq)
+
+def robust_multiply_filters(mel_filters, spectrogram, target_mels):
+    try:
+        if mel_filters.shape[1] == spectrogram.shape[0]:
+            return mel_filters @ spectrogram
+        if mel_filters.shape[1] == spectrogram.shape[1]:
+            return mel_filters @ spectrogram.T
+        if mel_filters.shape[0] == spectrogram.shape[0]:
+            return mel_filters.T @ spectrogram
+        if mel_filters.shape[0] == spectrogram.shape[1]:
+            return mel_filters.T @ spectrogram.T
+    except RuntimeError:
+        min_dim_freq = min(mel_filters.shape[1], spectrogram.shape[0])
+        min_dim_time = min(mel_filters.shape[0], spectrogram.shape[1])
+        mel_filters = mel_filters[:, :min_dim_freq]
+        spectrogram = spectrogram[:min_dim_freq, :min_dim_time]
+        return mel_filters @ spectrogram
+    raise RuntimeError("Shape mismatch could not be resolved in mel spectrogram matrix multiplication")
 
 def log_mel_spectrogram(
     audio: Union[str, np.ndarray, torch.Tensor],
@@ -143,15 +161,11 @@ def log_mel_spectrogram(
         pad_mode="reflect",
         return_complex=True,
     )
-    magnitudes = stft.abs() ** 2  # power spectrogram
-    mel_fb = create_mel_filters(N_FFT, n_mels, SAMPLE_RATE).to(magnitudes.device)
+    magnitudes = stft.abs() ** 2
 
-    if mel_fb.shape[1] == magnitudes.shape[0]:
-        mel_spec = mel_fb @ magnitudes
-    elif mel_fb.shape[1] == magnitudes.shape[1]:
-        mel_spec = mel_fb @ magnitudes.T
-    else:
-        raise RuntimeError(f"Shape mismatch mel_fb: {mel_fb.shape} vs magnitudes: {magnitudes.shape}")
+    mel_filters = create_dynamic_mel_filters(N_FFT, n_mels, SAMPLE_RATE).to(magnitudes.device)
+
+    mel_spec = robust_multiply_filters(mel_filters, magnitudes, n_mels)
 
     log_spec = torch.clamp(mel_spec, min=1e-10).log10()
     log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
