@@ -1,69 +1,38 @@
-import os
-from functools import lru_cache
-from subprocess import CalledProcessError, run
-from typing import Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
-try:
-    import torchaudio
-    HAS_TORCHAUDIO = True
-except ImportError:
-    HAS_TORCHAUDIO = False
-
-try:
-    import librosa
-    HAS_LIBROSA = True
-except ImportError:
-    HAS_LIBROSA = False
+import librosa
+from typing import Optional, Union
 
 SAMPLE_RATE = 16000
 N_FFT = 1024
 HOP_LENGTH = 160
+N_MELS = 80
+
 CHUNK_LENGTH = 30
-
-N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE
+N_SAMPLES = SAMPLE_RATE * CHUNK_LENGTH
 N_FRAMES = (N_SAMPLES + HOP_LENGTH - 1) // HOP_LENGTH
-N_SAMPLES_PER_TOKEN = HOP_LENGTH * 2
-FRAMES_PER_SECOND = SAMPLE_RATE / HOP_LENGTH
-TOKENS_PER_SECOND = SAMPLE_RATE / N_SAMPLES_PER_TOKEN
 
-@lru_cache(maxsize=64)
-def _cached_load_audio(path: str, sr: int) -> np.ndarray:
-    return _load_audio(path, sr)
+FRAMES_PER_SECOND = SAMPLE_RATE / HOP_LENGTH
+TOKENS_PER_SECOND = SAMPLE_RATE / (HOP_LENGTH * 2)
+
+OVERLAP_SECONDS = 5
 
 def load_audio(file: str, sr: int = SAMPLE_RATE) -> np.ndarray:
-    return _cached_load_audio(file, sr)
-
-def _load_audio(file: str, sr: int = SAMPLE_RATE) -> np.ndarray:
-    if HAS_TORCHAUDIO:
-        try:
-            waveform, loaded_sr = torchaudio.load(file)
-            if loaded_sr != sr:
-                waveform = torchaudio.functional.resample(waveform, loaded_sr, sr)
-            if waveform.ndim > 1:
-                waveform = waveform.mean(dim=0)
-            return waveform.numpy().astype(np.float32)
-        except Exception:
-            pass
-    cmd = [
-        "ffmpeg", "-nostdin", "-threads", "0", "-i", file,
-        "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", str(sr), "-"
-    ]
-    try:
-        out = run(cmd, capture_output=True, check=True).stdout
-    except CalledProcessError as e:
-        raise RuntimeError(f"Failed to load audio {file}: {e.stderr.decode()}") from e
-    return np.frombuffer(out, np.int16).astype(np.float32) / 32768.0
+    waveform, _ = librosa.load(file, sr=sr, mono=True)
+    max_amp = np.abs(waveform).max()
+    if max_amp > 0:
+        waveform = waveform / max_amp
+    return waveform.astype(np.float32)
 
 def pad_or_trim(
     array: Union[np.ndarray, torch.Tensor],
-    length: int = N_SAMPLES,
+    length: int,
     *,
     axis: int = -1,
     pad_mode: str = 'constant',
     center: bool = False,
-    constant_value: float = 0.0
+    constant_value: float = 0.0,
 ) -> Union[np.ndarray, torch.Tensor]:
     if torch.is_tensor(array):
         current = array.shape[axis]
@@ -73,18 +42,14 @@ def pad_or_trim(
                 indices = torch.arange(start, start + length, device=array.device)
             else:
                 indices = torch.arange(length, device=array.device)
-            array = array.index_select(dim=axis, index=indices)
+            return array.index_select(dim=axis, index=indices)
         elif current < length:
             pad_len = length - current
-            if pad_mode == 'constant':
-                pad_width = [(0, 0)] * array.ndim
-                pad_width[axis] = (0, pad_len)
-                array = F.pad(array, [p for extents in reversed(pad_width) for p in extents], value=constant_value)
-            elif pad_mode == 'reflect':
-                array = F.pad(array, (0, pad_len), mode='reflect')
-            else:
-                raise ValueError(f"Unsupported pad_mode {pad_mode} for tensors")
-        return array
+            pad_size = [0] * (2 * array.ndim)
+            pad_size[-2 * axis - 1] = pad_len
+            return F.pad(array, pad_size, mode=pad_mode, value=constant_value)
+        else:
+            return array
     else:
         current = array.shape[axis]
         if current > length:
@@ -92,81 +57,87 @@ def pad_or_trim(
                 start = (current - length) // 2
                 slices = [slice(None)] * array.ndim
                 slices[axis] = slice(start, start + length)
-                array = array[tuple(slices)]
+                return array[tuple(slices)]
             else:
                 slices = [slice(None)] * array.ndim
                 slices[axis] = slice(length)
-                array = array[tuple(slices)]
+                return array[tuple(slices)]
         elif current < length:
             pad_width = [(0, 0)] * array.ndim
             pad_width[axis] = (0, length - current)
-            array = np.pad(array, pad_width=pad_width, mode='constant', constant_values=constant_value)
-        return array
-
-@lru_cache(maxsize=None)
-def get_hann_window(device: Union[str, torch.device], n_fft: int = N_FFT):
-    return torch.hann_window(n_fft, dtype=torch.float32, device=device)
-
-def create_dynamic_mel_filters(n_fft, n_mels, sample_rate, fmin=0.0, fmax=None):
-    if HAS_LIBROSA:
-        fmax = fmax or sample_rate / 2
-        mel_fb = librosa.filters.mel(sr=sample_rate, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=fmax)
-        return torch.from_numpy(mel_fb).float()
-    n_freq = n_fft // 2 + 1
-    return torch.eye(n_mels, n_freq)
-
-def robust_multiply_filters(mel_filters, spectrogram, target_mels):
-    try:
-        if mel_filters.shape[1] == spectrogram.shape[0]:
-            return mel_filters @ spectrogram
-        if mel_filters.shape[1] == spectrogram.shape[1]:
-            return mel_filters @ spectrogram.T
-        if mel_filters.shape[0] == spectrogram.shape[0]:
-            return mel_filters.T @ spectrogram
-        if mel_filters.shape[0] == spectrogram.shape[1]:
-            return mel_filters.T @ spectrogram.T
-    except RuntimeError:
-        min_dim_freq = min(mel_filters.shape[1], spectrogram.shape[0])
-        min_dim_time = min(mel_filters.shape[0], spectrogram.shape[1])
-        mel_filters = mel_filters[:, :min_dim_freq]
-        spectrogram = spectrogram[:min_dim_freq, :min_dim_time]
-        return mel_filters @ spectrogram
-    raise RuntimeError("Shape mismatch could not be resolved in mel spectrogram matrix multiplication")
+            return np.pad(array, pad_width, mode=pad_mode, constant_values=constant_value)
+        else:
+            return array
 
 def log_mel_spectrogram(
     audio: Union[str, np.ndarray, torch.Tensor],
-    n_mels: int = 80,
+    n_mels: int = N_MELS,
     padding: int = 0,
-    device: Optional[Union[str, torch.device]] = None,
-    dither: float = 1e-5
+    device: Optional[torch.device] = None,
+    dither: float = 1e-5,
 ) -> torch.Tensor:
-    if not torch.is_tensor(audio):
-        if isinstance(audio, str):
-            audio = load_audio(audio)
+    if isinstance(audio, str):
+        audio = load_audio(audio)
+    if isinstance(audio, np.ndarray):
         audio = torch.from_numpy(audio)
-    if device is not None:
+    if device:
         audio = audio.to(device)
     if padding > 0:
         audio = F.pad(audio, (0, padding))
     if dither > 0:
         audio = audio + dither * torch.randn_like(audio)
 
-    window = get_hann_window(audio.device if device is None else device, N_FFT)
-    stft = torch.stft(
-        audio,
-        n_fft=N_FFT,
-        hop_length=HOP_LENGTH,
-        window=window,
-        center=True,
-        pad_mode="reflect",
-        return_complex=True,
-    )
-    magnitudes = stft.abs() ** 2
+    window = torch.hann_window(N_FFT, device=audio.device)
+    stft_ = torch.stft(audio, n_fft=N_FFT, hop_length=HOP_LENGTH,
+                       win_length=N_FFT, window=window,
+                       center=True, return_complex=True)
+    power_spectrogram = stft_.abs() ** 2
 
-    mel_filters = create_dynamic_mel_filters(N_FFT, n_mels, SAMPLE_RATE).to(magnitudes.device)
+    mel_fb = torch.tensor(librosa.filters.mel(sr=SAMPLE_RATE, n_fft=N_FFT, n_mels=n_mels),
+                          dtype=power_spectrogram.dtype,
+                          device=power_spectrogram.device)
 
-    mel_spec = robust_multiply_filters(mel_filters, magnitudes, n_mels)
+    mel_spec = torch.matmul(mel_fb, power_spectrogram)
+    mel_spec = torch.clamp(mel_spec, min=1e-10)
+    log_mel = torch.log10(mel_spec)
+    log_mel = torch.clamp(log_mel, max=log_mel.max())
+    normalized = (log_mel + 4.0) / 4.0
 
-    log_spec = torch.clamp(mel_spec, min=1e-10).log10()
-    log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
-    return (log_spec + 4.0) / 4.0
+    return normalized
+
+def sliding_window_log_mel_spectrogram(
+    audio_path: str,
+    n_mels: int = N_MELS,
+    chunk_seconds: int = CHUNK_LENGTH,
+    overlap_seconds: int = OVERLAP_SECONDS,
+    device: Optional[torch.device] = None,
+) -> torch.Tensor:
+    audio = load_audio(audio_path)
+    sr = SAMPLE_RATE
+
+    chunk_samples = int(chunk_seconds * sr)
+    overlap_samples = int(overlap_seconds * sr)
+    step = chunk_samples - overlap_samples
+
+    length_audio = len(audio)
+    mel_chunks = []
+
+    start = 0
+    while start < length_audio:
+        end = min(start + chunk_samples, length_audio)
+        chunk = audio[start:end]
+
+        if start != 0 and overlap_samples > 0:
+            left_ctx_start = max(0, start - overlap_samples)
+            left_ctx = audio[left_ctx_start:start]
+            chunk = np.concatenate((left_ctx, chunk))
+
+        if len(chunk) < chunk_samples + overlap_samples:
+            chunk = np.pad(chunk, (0, chunk_samples + overlap_samples - len(chunk)), mode='constant')
+
+        mel_spec = log_mel_spectrogram(chunk, n_mels=n_mels, device=device)
+        mel_chunks.append(mel_spec)
+
+        start += step
+
+    return torch.stack(mel_chunks)
