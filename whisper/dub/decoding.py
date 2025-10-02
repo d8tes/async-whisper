@@ -13,6 +13,9 @@ from .types.utils import compression_ratio
 if TYPE_CHECKING:
     from .types.model import Whisper
 
+# Global cache to store awaited tokenizer instances by init parameters
+_tokenizer_await_cache: Dict[Tuple, Tokenizer] = {}
+
 async def _to_thread(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
@@ -273,8 +276,12 @@ class DecodingTask:
         self.options = self._verify_options(options)
 
     async def async_init(self):
-        if self.tokenizer is None:
-            self.tokenizer = await get_tokenizer(**self._init_tokenizer_params)
+        key = tuple(sorted(self._init_tokenizer_params.items()))
+        global _tokenizer_await_cache
+        if key not in _tokenizer_await_cache:
+            _tokenizer_await_cache[key] = await get_tokenizer(**self._init_tokenizer_params)
+        self.tokenizer = _tokenizer_await_cache[key]
+
         self.n_group = self.options.beam_size or self.options.best_of or 1
         self.n_ctx = self.model.dims.n_text_ctx
         self.sample_len = self.options.sample_len or self.model.dims.n_text_ctx // 2
